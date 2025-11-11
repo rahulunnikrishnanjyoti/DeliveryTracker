@@ -17,7 +17,6 @@ KPIs per tab:
 
 Deploy: Render / Railway / Heroku / etc.
 """
-!pip install dash==2.15.0 pyngrok==7.0.0 plotly pandas flask --quiet
 
 import pandas as pd
 import numpy as np
