@@ -1,5 +1,6 @@
 dash==2.15.0
+flask
 plotly
 pandas
-flask
+numpy
 gunicorn
