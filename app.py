@@ -7,17 +7,6 @@ Original file is located at
     https://colab.research.google.com/drive/1FeRy2BSZcLajPd1f9SgHMF42CWAcgraU
 """
 
-"""
-Delivery Tracker Dashboard (Dash + Plotly)
-Live Google Sheet -> 3 Tab Views (Project / Block / Anganwadi)
-KPIs per tab:
-  1) Delivery Rate (Horizontal bar, descending)
-  2) Quantity Distribution (Butterfly: Complete vs Partial)
-  3) Time-Driven Distribution (Clustered bar: On-Time vs Delayed)
-
-Deploy: Render / Railway / Heroku / etc.
-"""
-
 import pandas as pd
 import numpy as np
 from flask import Flask
@@ -29,17 +18,13 @@ import plotly.express as px
 # ---------------------------
 # CONFIG
 # ---------------------------
-SHEET_EXPORT_CSV = (
-    "https://docs.google.com/spreadsheets/d/1kF3fdOX3hIBGczBJ5COMvZ_lmRO-ULLQuZkxe0B2haU/export?format=csv"
-)
+SHEET_EXPORT_CSV = "https://docs.google.com/spreadsheets/d/1kF3fdOX3hIBGczBJ5COMvZ_lmRO-ULLQuZkxe0B2haU/export?format=csv"
 
-# Color palette (from your reference)
-COLOR_PRIMARY = "#4B2E83"  # deep purple-blue
-COLOR_ACCENT = "#F4B400"   # golden yellow
+COLOR_PRIMARY = "#4B2E83"
+COLOR_ACCENT = "#F4B400"
 BG_COLOR = "#F8FAFC"
 TEXT_COLOR = "#1f2937"
 
-# Create Flask + Dash
 server = Flask(__name__)
 app = dash.Dash(__name__, server=server, suppress_callback_exceptions=True)
 app.title = "Delivery Tracker Dashboard"
@@ -48,11 +33,9 @@ app.title = "Delivery Tracker Dashboard"
 # DATA HELPERS
 # ---------------------------
 def load_sheet_data(url=SHEET_EXPORT_CSV):
-    """Load Google Sheet CSV and normalize column names."""
     try:
         df = pd.read_csv(url)
     except Exception as e:
-        # return empty DataFrame with expected columns to avoid breaking UI
         print("Error loading sheet:", e)
         cols = [
             "Project", "Block", "Anganwadi", "Overall Delivery Rate",
@@ -60,14 +43,7 @@ def load_sheet_data(url=SHEET_EXPORT_CSV):
         ]
         return pd.DataFrame(columns=cols)
 
-    # strip column whitespace and standardize names
     df.columns = df.columns.str.strip()
-    expected = [
-        "Project", "Block", "Anganwadi", "Overall Delivery Rate",
-        "Complete Delivery", "Partial Delivery", "On-Time Delivery", "Delayed Delivery"
-    ]
-
-    # If columns with slightly different naming exist, attempt to map common variants
     col_map = {}
     for c in df.columns:
         low = c.lower().replace(" ", "")
@@ -75,27 +51,21 @@ def load_sheet_data(url=SHEET_EXPORT_CSV):
             col_map[c] = "Project"
         elif low in ["block"]:
             col_map[c] = "Block"
-        elif low in ["anganwadi", "anganwadi_name", "anganwadiname"]:
+        elif low in ["anganwadi", "anganwadiname", "anganwadi_name"]:
             col_map[c] = "Anganwadi"
-        elif "overall" in low and "delivery" in low and "rate" in low:
+        elif "overall" in low and "delivery" in low:
             col_map[c] = "Overall Delivery Rate"
         elif "complete" in low and "delivery" in low:
             col_map[c] = "Complete Delivery"
         elif "partial" in low and "delivery" in low:
             col_map[c] = "Partial Delivery"
-        elif ("on" in low and "time" in low) or ("ontime" in low):
+        elif "ontime" in low or ("on" in low and "time" in low):
             col_map[c] = "On-Time Delivery"
         elif "delayed" in low:
             col_map[c] = "Delayed Delivery"
 
     df = df.rename(columns=col_map)
 
-    # Ensure expected columns exist
-    for c in expected:
-        if c not in df.columns:
-            df[c] = np.nan
-
-    # ✅ FIXED: convert percentage strings to numeric values
     numeric_cols = [
         "Overall Delivery Rate", "Complete Delivery", "Partial Delivery",
         "On-Time Delivery", "Delayed Delivery"
@@ -109,31 +79,23 @@ def load_sheet_data(url=SHEET_EXPORT_CSV):
         )
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Trim text columns
     for tc in ["Project", "Block", "Anganwadi"]:
         df[tc] = df[tc].astype(str).str.strip()
 
     return df
 
+
 def aggregate_for_level(df, level):
-    """
-    level: "Project", "Block", or "Anganwadi"
-    Returns a dataframe indexed by level with avg of numeric KPIs.
-    For Anganwadi, we return the unique Anganwadi rows (using provided values).
-    """
     numeric_cols = [
         "Overall Delivery Rate", "Complete Delivery", "Partial Delivery",
         "On-Time Delivery", "Delayed Delivery"
     ]
     if level == "Anganwadi":
-        # return direct values (one row per Anganwadi)
-        res = df.groupby(["Project","Block","Anganwadi"], as_index=False)[numeric_cols].mean()
-        # use Anganwadi name as index/label
+        res = df.groupby(["Project", "Block", "Anganwadi"], as_index=False)[numeric_cols].mean()
         res = res.drop_duplicates(subset=["Anganwadi"]).reset_index(drop=True)
         res["label"] = res["Anganwadi"]
         return res
     elif level == "Block":
-        # average across anganwadis within each block
         res = df.groupby("Block", as_index=False)[numeric_cols].mean()
         res["label"] = res["Block"]
         return res
@@ -145,15 +107,10 @@ def aggregate_for_level(df, level):
         raise ValueError("Invalid level")
 
 # ---------------------------
-# FIGURE CREATORS
+# FIGURES
 # ---------------------------
 def fig_delivery_rate(df_level):
-    """
-    Horizontal bar chart of 'Overall Delivery Rate' sorted descending.
-    df_level expected to have columns: label, Overall Delivery Rate
-    """
-    df_plot = df_level.copy()
-    df_plot = df_plot.sort_values("Overall Delivery Rate", ascending=True)  # ascending for horizontal
+    df_plot = df_level.sort_values("Overall Delivery Rate", ascending=True)
     fig = px.bar(
         df_plot,
         x="Overall Delivery Rate",
@@ -163,112 +120,82 @@ def fig_delivery_rate(df_level):
         labels={"label": "", "Overall Delivery Rate": "Delivery Rate (%)"},
         height=420
     )
-    fig.update_traces(marker_color=COLOR_PRIMARY, texttemplate="%{text:.1f}%", textposition="outside")
+    fig.update_traces(
+        marker_color=COLOR_PRIMARY,
+        texttemplate="%{text:.0f}%",  # No decimals
+        textposition="outside"
+    )
     fig.update_layout(
-        title="Delivery Rate",
+        title=dict(text="<b>Delivery Rate</b>", font=dict(size=18, color=TEXT_COLOR)),
         xaxis=dict(range=[0, 100], ticksuffix="%"),
-        yaxis=dict(tickfont=dict(size=12, family="Arial")),
         plot_bgcolor="white",
         paper_bgcolor=BG_COLOR,
-        margin=dict(l=150, r=40, t=60, b=40),
-        title_font=dict(size=18, color=TEXT_COLOR)
+        margin=dict(l=150, r=40, t=60, b=40)
     )
     return fig
 
+
 def fig_butterfly(df_level):
-    """
-    Butterfly (mirrored) chart for Complete vs Partial Delivery.
-    We'll plot Partial on the left as negative values for mirror effect,
-    and Complete on the right as positive.
-    df_level expected to have columns: label, Complete Delivery, Partial Delivery
-    """
     df_plot = df_level.copy()
-    # Replace NaN with 0 for plotting
     df_plot["Complete Delivery"] = df_plot["Complete Delivery"].fillna(0)
     df_plot["Partial Delivery"] = df_plot["Partial Delivery"].fillna(0)
-
-    # Sort by max of the two (so it looks ordered)
     df_plot["sort_val"] = df_plot[["Complete Delivery", "Partial Delivery"]].max(axis=1)
     df_plot = df_plot.sort_values("sort_val", ascending=True)
-
     fig = go.Figure()
-
-    # Left side: Partial (negative)
     fig.add_trace(go.Bar(
         x=-df_plot["Partial Delivery"],
         y=df_plot["label"],
         orientation="h",
         name="Partial Delivery",
-        hovertemplate="%{y}: %{x:.1f}%",
+        hovertemplate="%{y}: %{x:.0f}%",
         marker_color=COLOR_PRIMARY
     ))
-
-    # Right side: Complete (positive)
     fig.add_trace(go.Bar(
         x=df_plot["Complete Delivery"],
         y=df_plot["label"],
         orientation="h",
         name="Complete Delivery",
-        hovertemplate="%{y}: %{x:.1f}%",
+        hovertemplate="%{y}: %{x:.0f}%",
         marker_color=COLOR_ACCENT
     ))
-
-    # Calculate axis limits symmetric
     max_val = max(df_plot["Complete Delivery"].max(), df_plot["Partial Delivery"].max())
-    axis_limit = max(100, np.ceil(max_val / 10) * 10)  # ensure at least up to 100
-
+    axis_limit = max(100, np.ceil(max_val / 10) * 10)
     fig.update_layout(
         barmode="relative",
-        title="Quantity Distribution (Complete vs Partial)",
+        title=dict(text="<b>Delivery Fulfilment Status</b>", font=dict(size=18, color=TEXT_COLOR)),
         xaxis=dict(
             tickvals=[-axis_limit, -axis_limit/2, 0, axis_limit/2, axis_limit],
             ticktext=[str(axis_limit), str(int(axis_limit/2)), "0", str(int(axis_limit/2)), str(axis_limit)],
             range=[-axis_limit, axis_limit],
             ticksuffix="%"
         ),
-        yaxis=dict(autorange="reversed"),  # keep same order as barh
+        yaxis=dict(autorange="reversed"),
         plot_bgcolor="white",
         paper_bgcolor=BG_COLOR,
-        margin=dict(l=160, r=40, t=60, b=40),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        margin=dict(l=160, r=40, t=80, b=40),  # Legend pushed down
+        legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="right", x=1)  # Legend lower
     )
-
-    # Add percent labels on the bars
-    # left labels (Partial)
     for idx, row in df_plot.iterrows():
         fig.add_annotation(x=-row["Partial Delivery"] - (axis_limit*0.02),
-                           y=row["label"],
-                           text=f"{row['Partial Delivery']:.1f}%",
-                           showarrow=False,
-                           font=dict(size=11, color="black"),
-                           xanchor="right")
-    # right labels (Complete)
-    for idx, row in df_plot.iterrows():
+                           y=row["label"], text=f"{row['Partial Delivery']:.0f}%",
+                           showarrow=False, font=dict(size=11, color="black"), xanchor="right")
         fig.add_annotation(x=row["Complete Delivery"] + (axis_limit*0.02),
-                           y=row["label"],
-                           text=f"{row['Complete Delivery']:.1f}%",
-                           showarrow=False,
-                           font=dict(size=11, color="black"),
-                           xanchor="left")
-
+                           y=row["label"], text=f"{row['Complete Delivery']:.0f}%",
+                           showarrow=False, font=dict(size=11, color="black"), xanchor="left")
     return fig
 
+
 def fig_clustered_time(df_level):
-    """
-    Clustered/grouped bar chart for On-Time vs Delayed Delivery.
-    df_level expected to have columns: label, On-Time Delivery, Delayed Delivery
-    """
     df_plot = df_level.copy()
     df_plot["On-Time Delivery"] = df_plot["On-Time Delivery"].fillna(0)
     df_plot["Delayed Delivery"] = df_plot["Delayed Delivery"].fillna(0)
-
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=df_plot["label"],
         y=df_plot["On-Time Delivery"],
         name="On-Time Delivery",
         marker_color=COLOR_PRIMARY,
-        text=[f"{v:.1f}%" for v in df_plot["On-Time Delivery"]],
+        text=[f"{v:.0f}%" for v in df_plot["On-Time Delivery"]],
         textposition="outside"
     ))
     fig.add_trace(go.Bar(
@@ -276,59 +203,55 @@ def fig_clustered_time(df_level):
         y=df_plot["Delayed Delivery"],
         name="Delayed Delivery",
         marker_color=COLOR_ACCENT,
-        text=[f"{v:.1f}%" for v in df_plot["Delayed Delivery"]],
+        text=[f"{v:.0f}%" for v in df_plot["Delayed Delivery"]],
         textposition="outside"
     ))
-
     fig.update_layout(
         barmode="group",
-        title="Time-Driven Distribution (On-Time vs Delayed)",
+        title=dict(text="<b>Delivery Schedule Adherence</b>", font=dict(size=18, color=TEXT_COLOR)),
         xaxis=dict(tickangle=-45),
         yaxis=dict(range=[0, 100], ticksuffix="%"),
         plot_bgcolor="white",
         paper_bgcolor=BG_COLOR,
-        margin=dict(l=40, r=40, t=60, b=140),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        margin=dict(l=40, r=40, t=80, b=140),  # Added more space for legend
+        legend=dict(orientation="h", yanchor="bottom", y=-0.48, xanchor="right", x=1)
     )
     return fig
 
 # ---------------------------
-# DASH LAYOUT
+# LAYOUT
 # ---------------------------
 app.layout = html.Div(
     style={"backgroundColor": BG_COLOR, "minHeight": "100vh", "padding": "18px", "fontFamily": "Inter, Arial, sans-serif"},
     children=[
         html.Div([
-            html.H1("📦 Delivery Tracker Dashboard", style={"color": TEXT_COLOR, "marginBottom": "6px"}),
-            html.P("Live Google Sheet data · Professional visuals · Project / Block / Anganwadi views",
-                   style={"color": "#475569", "marginTop": "0px"})
+            html.H1("📦 Delivery Tracker Dashboard", style={"color": TEXT_COLOR, "marginBottom": "4px"}),
+            html.P("Data refreshed live from Google Sheet (every 2 minutes).", style={"color": "#475569", "marginTop": "0px"})
         ], style={"maxWidth": "1200px", "margin": "auto"}),
 
         html.Div([
-            dcc.Tabs(
-                id="tabs",
-                value="Project",
-                children=[
-                    dcc.Tab(label="Project View", value="Project"),
-                    dcc.Tab(label="Block View", value="Block"),
-                    dcc.Tab(label="Anganwadi View", value="Anganwadi")
-                ],
-                colors={
-                    "border": "white",
-                    "primary": COLOR_PRIMARY,
-                    "background": BG_COLOR
-                }
-            ),
+            html.Div([
+                dcc.Tabs(
+                    id="tabs",
+                    value="Project",
+                    children=[
+                        dcc.Tab(label="🎯 Project View", value="Project"),
+                        dcc.Tab(label="🌏 Block View", value="Block"),
+                        dcc.Tab(label="🏫 Anganwadi View", value="Anganwadi")
+                    ],
+                    colors={"border": "white", "primary": COLOR_PRIMARY, "background": "white"},
+                    style={"borderRadius": "8px", "boxShadow": "0 1px 6px rgba(0,0,0,0.1)", "fontWeight": "600"}
+                )
+            ], style={"padding": "8px", "backgroundColor": "white", "borderRadius": "8px", "marginTop": "10px"}),
 
-            # Hidden store to hold latest loaded dataframe (not the entire df object - just a timestamp hint)
-            dcc.Interval(id="interval-refresh", interval=120*1000, n_intervals=0),  # refresh every 2 minutes
+            dcc.Interval(id="interval-refresh", interval=120*1000, n_intervals=0),
             html.Div(id="content-area", style={"marginTop": "18px"})
         ], style={"maxWidth": "1200px", "margin": "auto"})
     ]
 )
 
 # ---------------------------
-# CALLBACKS
+# CALLBACK
 # ---------------------------
 @app.callback(
     Output("content-area", "children"),
@@ -336,48 +259,40 @@ app.layout = html.Div(
     Input("interval-refresh", "n_intervals")
 )
 def render_tab(tab_value, n_intervals):
-    """
-    Whenever tab is changed or interval ticks, reload data and regenerate figures for that level.
-    """
     df = load_sheet_data()
-    # If the sheet is empty, show a friendly message
     if df.shape[0] == 0:
         return html.Div([
             html.H3("No data available from the Google Sheet.", style={"color": TEXT_COLOR}),
             html.P("Please check the Google Sheet link, permissions, or data format.", style={"color": "#6b7280"})
         ], style={"padding": "30px", "backgroundColor": "white", "borderRadius": "8px"})
 
-    # Prepare aggregated df for the selected level
     df_level = aggregate_for_level(df, tab_value)
-
-    # Build three KPIs / charts
     fig1 = fig_delivery_rate(df_level)
     fig2 = fig_butterfly(df_level)
     fig3 = fig_clustered_time(df_level)
 
-    # Layout: fig1 (full width), fig2 + fig3 side-by-side
-    layout_children = [
-        html.Div([
-            dcc.Graph(figure=fig1, config={"displayModeBar": False})
-        ], style={"backgroundColor": "white", "padding": "12px", "borderRadius": "8px", "boxShadow": "0 1px 6px rgba(0,0,0,0.08)"}),
+    return html.Div([
+        html.Div(dcc.Graph(figure=fig1, config={"displayModeBar": False}),
+                 style={"backgroundColor": "white", "padding": "12px", "borderRadius": "8px",
+                        "boxShadow": "0 1px 6px rgba(0,0,0,0.08)"}),
 
         html.Div([
-            html.Div(dcc.Graph(figure=fig2, config={"displayModeBar": False}), style={"width": "49%", "display": "inline-block", "verticalAlign": "top"}),
-            html.Div(dcc.Graph(figure=fig3, config={"displayModeBar": False}), style={"width": "49%", "display": "inline-block", "float": "right", "verticalAlign": "top"})
+            html.Div(dcc.Graph(figure=fig2, config={"displayModeBar": False}),
+                     style={"width": "49%", "display": "inline-block", "verticalAlign": "top",
+                            "backgroundColor": "white", "padding": "12px", "borderRadius": "8px",
+                            "boxShadow": "0 1px 6px rgba(0,0,0,0.08)"}),
+
+            html.Div(dcc.Graph(figure=fig3, config={"displayModeBar": False}),
+                     style={"width": "49%", "display": "inline-block", "float": "right", "verticalAlign": "top",
+                            "backgroundColor": "white", "padding": "12px", "borderRadius": "8px",
+                            "boxShadow": "0 1px 6px rgba(0,0,0,0.08)"})
         ], style={"marginTop": "16px"})
-    ]
-
-    # Extra helpful caption
-    caption = html.Div([
-        html.P(f"View: {tab_value} · Data refreshed live from Google Sheet (every 2 minutes).",
-               style={"color": "#6b7280", "fontSize": "13px", "marginTop": "8px"})
     ])
-
-    return html.Div(layout_children + [caption])
 
 # ---------------------------
 # RUN
 # ---------------------------
 if __name__ == "__main__":
-    # For local dev: python app.py will run the server
     app.run_server(host="0.0.0.0", port=8050, debug=False)
+
+!pip install dash==2.15.0 pyngrok==7.0.0 plotly pandas flask --quiet
